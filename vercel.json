@@ -1,7 +1,6 @@
 {
   "functions": {
-    "api.py": {
-      "runtime": "python3.12",
+    "ai.py": {
       "memory": 1024,
       "maxDuration": 30
     }
@@ -9,7 +8,7 @@
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "api.py"
+      "dest": "ai.py"
     }
   ]
 }
