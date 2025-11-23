@@ -1,4 +1,4 @@
-# ai.py
+# api/index.py
 from flask import Flask, request, jsonify, session
 from codewords_client import AsyncCodewordsClient
 import asyncio
@@ -142,4 +142,4 @@ application = WsgiToAsgi(app)
 # برای لوکال
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("ai:app", host="0.0.0.0", port=5001, reload=True)
+    uvicorn.run("index:app", host="0.0.0.0", port=5001, reload=True)
