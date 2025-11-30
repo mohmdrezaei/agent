@@ -1,108 +1,131 @@
-from flask import Flask, request, jsonify, render_template_string
-from codewords_client import AsyncCodewordsClient
+from flask import Flask, request, jsonify, session, render_template_string
+import httpx
 import asyncio
 import os
-
-os.environ['CODEWORDS_API_KEY'] = 'cwk-95bb46cd9f296a1e4915e805bc2cfb5572d4cec2587235f8cb178846b64f9e13'
+import uuid
 
 app = Flask(__name__)
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "my-super-secret-key-2025")
+
+CODEWORDS_API_KEY = os.getenv(
+    "CODEWORDS_API_KEY",
+    "cwk-95bb46cd9f296a1e4915e805bc2cfb5572d4cec2587235f8cb178846b64f9e13"
+)
+
 SERVICE_ID = "university_rules_assistant_47c12da2"
+BASE_URL = "https://runtime.codewords.ai"
+
+async def call_codewords_api(question: str):
+    """فراخوانی مستقیم CodeWords با httpx"""
+    async with httpx.AsyncClient(timeout=90.0) as client:
+        try:
+            response = await client.post(
+                f"{BASE_URL}/run/{SERVICE_ID}",
+                headers={
+                    "Authorization": f"Bearer {CODEWORDS_API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={"question": question.strip()}
+            )
+            
+            # بررسی خطا
+            if response.status_code >= 400:
+                error_text = response.text
+                try:
+                    error_json = response.json()
+                    error_text = error_json.get("detail", error_text)
+                except:
+                    pass
+                raise Exception(f"خطای CodeWords: {error_text}")
+            
+            return response.json()
+            
+        except httpx.TimeoutException:
+            raise Exception("زمان انتظار تمام شد")
+        except httpx.ConnectError:
+            raise Exception("خطا در اتصال به سرور")
 
 HTML = """
 <!DOCTYPE html>
-<html dir="rtl" lang="fa">
+<html lang="fa" dir="rtl">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>دستیار قوانین دانشگاه</title>
     <style>
-        *{margin:0;padding:0;box-sizing:border-box}
-        body{font-family:Tahoma,Arial;background:linear-gradient(135deg,#667eea,#764ba2);min-height:100vh;display:flex;justify-content:center;align-items:center;padding:10px}
-        .c{width:100%;max-width:900px;background:#fff;border-radius:20px;box-shadow:0 10px 40px rgba(0,0,0,.3);overflow:hidden}
-        .h{background:linear-gradient(135deg,#1e3a8a,#3b82f6);color:#fff;padding:25px;text-align:center}
-        .h h1{font-size:24px;margin-bottom:8px}
-        .h p{font-size:14px;opacity:.95}
-        .chat{padding:20px;background:#f3f4f6;min-height:500px;max-height:600px;overflow-y:auto}
-        .m{margin:15px 0;display:flex;animation:f .4s}
-        @keyframes f{from{opacity:0;transform:translateY(10px)}to{opacity:1}}
-        .m.u{justify-content:flex-start}
-        .m.a{justify-content:flex-end}
-        .b{max-width:80%;padding:15px 20px;border-radius:15px;box-shadow:0 2px 5px rgba(0,0,0,.1);line-height:1.7}
-        .m.u .b{background:#3b82f6;color:#fff;border-bottom-left-radius:3px}
-        .m.a .b{background:#fff;color:#1f2937;border-bottom-right-radius:3px}
-        .t{font-size:11px;color:#9ca3af;margin-top:6px}
-        .in{padding:18px;background:#fff;display:flex;gap:12px;border-top:1px solid #e5e7eb}
-        input{flex:1;padding:15px 20px;border:2px solid #e5e7eb;border-radius:25px;font-size:16px;font-family:inherit}
-        input:focus{outline:none;border-color:#3b82f6}
-        button{padding:15px 30px;background:#3b82f6;color:#fff;border:none;border-radius:25px;cursor:pointer;font-weight:700;font-size:16px}
-        button:hover{background:#2563eb}
-        button:disabled{background:#d1d5db;cursor:not-allowed}
-        .loading{text-align:center;padding:15px;color:#6b7280;font-style:italic}
-        .b h3{font-size:18px;margin:14px 0 10px 0;color:#1e3a8a}
-        .b h4{font-size:16px;margin:12px 0 8px 0;color:#3b82f6}
-        .b strong{color:#1e40af;font-weight:600}
-        .b ul{margin-right:25px;margin-top:8px}
+        :root { --p: #1e3a8a; --l: #3b82f6; }
+        * { margin:0; padding:0; box-sizing:border-box; font-family:Tahoma,Arial; }
+        body { background:linear-gradient(135deg,#667eea,#764ba2); min-height:100vh; display:flex; justify-content:center; align-items:center; padding:10px; }
+        .box { width:100%; max-width:850px; background:white; border-radius:20px; overflow:hidden; box-shadow:0 20px 50px rgba(0,0,0,0.3); }
+        .h { background:var(--p); color:white; padding:20px; text-align:center; }
+        .h h1 { font-size: 22px; margin-bottom: 5px; }
+        .h p { font-size: 13px; opacity: 0.9; }
+        .m { padding:20px; overflow-y:auto; background:#f3f4f6; min-height:500px; max-height:600px; }
+        .msg { margin:12px 0; display:flex; animation:f 0.4s; }
+        .u { justify-content:flex-start; }
+        .b { justify-content:flex-end; }
+        .bub { max-width:78%; padding:14px 18px; border-radius:18px; line-height:1.6; box-shadow:0 2px 4px rgba(0,0,0,0.1); }
+        .u .bub { background:var(--l); color:white; border-bottom-left-radius:4px; }
+        .b .bub { background:white; color:#1f2937; border-bottom-right-radius:4px; }
+        .t { font-size:10px; color:#888; margin-top:5px; }
+        .in { padding:15px; background:#fff; display:flex; gap:10px; border-top:1px solid #e5e7eb; }
+        input { flex:1; padding:16px; border:2px solid #e5e7eb; border-radius:30px; background:#fff; font-size:15px; }
+        input:focus { outline:none; border-color:var(--p); }
+        button { padding:16px 28px; background:var(--p); color:white; border:none; border-radius:30px; cursor:pointer; font-weight:bold; }
+        button:hover { background:#1e40af; }
+        button:disabled { background:#d1d5db; }
+        .new { background:#dc3545; padding:10px 18px; font-size:13px; }
+        .new:hover { background:#c82333; }
+        @keyframes f { from{opacity:0; transform:translateY(10px);} to{opacity:1;} }
+        .loading { text-align:center; padding:15px; color:#6b7280; font-style:italic; }
+        .bub h3 { font-size:18px; margin:12px 0 8px; color:var(--p); }
+        .bub h4 { font-size:16px; margin:10px 0 6px; color:var(--l); }
+        .bub strong { color:var(--p); }
     </style>
 </head>
 <body>
-    <div class="c">
-        <div class="h">
-            <h1>📚 دستیار قوانین آموزشی دانشگاه</h1>
-            <p>پاسخگویی دقیق بر اساس آیین‌نامه دانشگاه آزاد اسلامی</p>
-        </div>
-        
-        <div class="chat" id="ch">
-            <div class="m a">
-                <div class="b">
-                    سلام! من دستیار قوانین دانشگاه هستم.<br>
-                    می‌توانم درباره ثبت‌نام، واحد درسی، حضور و غیاب، مرخصی، انتقال و... کمک کنم.
-                </div>
-            </div>
-        </div>
-        
-        <div class="in">
-            <input id="i" placeholder="سوال خود را بپرسید..." onkeypress="if(event.key==='Enter')send()">
-            <button id="btn" onclick="send()">ارسال</button>
-        </div>
+<div class="box">
+    <div class="h">
+        <h1>📚 دستیار قوانین آموزشی دانشگاه</h1>
+        <p>پاسخگویی بر اساس آیین‌نامه رسمی</p>
     </div>
-    
-    <script>
-        function add(type,txt,time){
-            const ch=document.getElementById('ch');
-            const t=time?new Date(time).toLocaleTimeString('fa-IR',{hour:'2-digit',minute:'2-digit'}):'';
-            let f=txt.replace(/### (.*?)\\n/g,'<h3>$1</h3>').replace(/#### (.*?)\\n/g,'<h4>$1</h4>').replace(/\\*\\*(.*?)\\*\\*/g,'<strong>$1</strong>').replace(/^- (.*)$/gm,'• $1').replace(/\\n/g,'<br>');
-            ch.innerHTML+=`<div class="m ${type}"><div class="b">${f}${t?`<div class="t">${t}</div>`:''}</div></div>`;
-            ch.scrollTop=ch.scrollHeight;
-        }
-        
-        async function send(){
-            const i=document.getElementById('i');
-            const btn=document.getElementById('btn');
-            const q=i.value.trim();
-            if(q.length<3){alert('سوال باید حداقل 3 کاراکتر باشد');return}
-            add('u',q,new Date().toISOString());
-            i.value='';
-            btn.disabled=true;
-            btn.textContent='⏳';
-            const ch=document.getElementById('ch');
-            const lid='l'+Date.now();
-            ch.innerHTML+=`<div class="loading" id="${lid}">⏳ در حال بررسی...</div>`;
-            ch.scrollTop=ch.scrollHeight;
-            try{
-                const r=await fetch('/api/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})});
-                document.getElementById(lid)?.remove();
-                if(!r.ok)throw new Error('خطا');
-                const d=await r.json();
-                add('a',d.answer,new Date().toISOString());
-            }catch(e){
-                document.getElementById(lid)?.remove();
-                add('a',`❌ ${e.message}`,new Date().toISOString());
-            }finally{
-                btn.disabled=false;
-                btn.textContent='ارسال';
-            }
-        }
-    </script>
+    <div class="m" id="m">
+        <div class="msg b"><div class="bub">سلام! سوال خود درباره قوانین دانشگاه را بپرسید.</div></div>
+    </div>
+    <div class="in">
+        <input type="text" id="q" placeholder="مثال: شرایط ثبت‌نام چیست؟" autocomplete="off">
+        <button onclick="send()">ارسال</button>
+    </div>
+</div>
+
+<script>
+    const m = document.getElementById('m');
+    function add(t, s='b', time=new Date().toLocaleTimeString('fa-IR',{hour:'2-digit',minute:'2-digit'})) {
+        let f = t.replace(/### (.*?)\\n/g,'<h3>$1</h3>').replace(/#### (.*?)\\n/g,'<h4>$1</h4>').replace(/\\*\\*(.*?)\\*\\*/g,'<strong>$1</strong>').replace(/^- (.*)$/gm,'• $1').replace(/\\n/g,'<br>');
+        const d = document.createElement('div');
+        d.className = `msg ${s==='u'?'u':'b'}`;
+        d.innerHTML = `<div class="bub">${f}<div class="t">${time}</div></div>`;
+        m.appendChild(d); m.scrollTop = m.scrollHeight;
+    }
+    async function send() {
+        const i = document.getElementById('q');
+        const q = i.value.trim(); if (!q||q.length<3) {alert('سوال باید حداقل 3 کاراکتر باشد');return;}
+        add(q, 'u'); i.value = '';
+        const b = document.querySelector('button'); b.disabled=true; b.textContent='⏳';
+        const lid='l'+Date.now();
+        m.innerHTML+=`<div class="loading" id="${lid}">⏳ در حال بررسی قوانین...</div>`;
+        m.scrollTop=m.scrollHeight;
+        try {
+            const r = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({question:q})});
+            document.getElementById(lid)?.remove();
+            const d = await r.json();
+            if (d.error) throw new Error(d.error);
+            add(d.answer || "بدون پاسخ");
+        } catch(e) { document.getElementById(lid)?.remove(); add("❌ خطا: "+e.message, 'b'); }
+        finally { b.disabled=false; b.textContent='ارسال'; }
+    }
+    document.getElementById('q').addEventListener('keypress', e=>e.key==='Enter'&&send());
+</script>
 </body>
 </html>
 """
@@ -111,30 +134,27 @@ HTML = """
 def home():
     return render_template_string(HTML)
 
-@app.route('/api/ask', methods=['POST'])
-def ask():
+@app.route('/api/chat', methods=['POST'])
+def chat():
     try:
         data = request.get_json(force=True) or {}
-        q = data.get('question', '').strip()
+        q = data.get("question", "").strip()
         
         if len(q) < 3:
-            return jsonify({'error': 'سوال کوتاه است'}), 400
+            return jsonify({"error": "سوال خیلی کوتاه است"}), 400
         
-        async def call():
-            async with AsyncCodewordsClient() as client:
-                r = await client.run(
-                    service_id=SERVICE_ID,
-                    inputs={"question": q}
-                )
-                r.raise_for_status()
-                return r.json()
+        # فراخوانی CodeWords
+        result = asyncio.run(call_codewords_api(q))
         
-        result = asyncio.run(call())
-        return jsonify(result)
+        return jsonify({"answer": result.get("answer", "پاسخی دریافت نشد")})
         
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-# ✅ ASGI برای Vercel
+# ✅ ASGI wrapper برای Vercel
 from asgiref.wsgi import WsgiToAsgi
 application = WsgiToAsgi(app)
+
+# برای تست لوکال
+if __name__ == "__main__":
+    app.run(debug=True, host="0.0.0.0", port=5000)
